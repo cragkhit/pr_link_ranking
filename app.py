@@ -21,11 +21,29 @@ current_data = {
 
 
 def load_csv_data(filepath):
-    """Load PR and link data from CSV file."""
+    """Load PR and link data from CSV file.
+    
+    Args:
+        filepath: Path to CSV file with columns: pr_id, pr_title, pr_url, link_url, link_text
+    
+    Returns:
+        Dictionary mapping pr_id to PR data with links
+        
+    Raises:
+        KeyError: If required columns are missing
+        UnicodeDecodeError: If file encoding is not UTF-8
+    """
     prs = {}
+    required_columns = {'pr_id', 'pr_title', 'pr_url', 'link_url', 'link_text'}
     
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
+        
+        # Validate required columns exist
+        if not required_columns.issubset(set(reader.fieldnames or [])):
+            missing = required_columns - set(reader.fieldnames or [])
+            raise KeyError(f"Missing required columns: {', '.join(missing)}")
+        
         for row in reader:
             pr_id = row['pr_id']
             
@@ -66,6 +84,7 @@ def load_data():
     if not file.filename.endswith('.csv'):
         return jsonify({'error': 'File must be a CSV'}), 400
     
+    filepath = None
     try:
         # Save file temporarily
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -77,15 +96,16 @@ def load_data():
         current_data['prs'] = load_csv_data(filepath)
         current_data['rankings'] = {}
         
-        # Clean up
-        os.remove(filepath)
-        
         return jsonify({
             'success': True,
             'pr_count': len(current_data['prs'])
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to load CSV file'}), 500
+    finally:
+        # Always clean up the uploaded file
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
 
 
 @app.route('/api/load_sample', methods=['POST'])

@@ -13,7 +13,7 @@ A web application for building groundtruth data for pull request link ranking al
 
 ## Installation
 
-1. Install Python 3.7 or higher
+1. Install Python 3.8 or higher
 
 2. Install dependencies:
 ```bash
@@ -106,6 +106,7 @@ The application is built with:
 ## Notes
 
 - Rankings are stored in-memory and will be lost when the application restarts
+- **Important**: This application is designed for single-user use. Data is shared across all users accessing the application simultaneously
 - Maximum file upload size: 16MB
 - The application runs on `http://0.0.0.0:5000` by default
 

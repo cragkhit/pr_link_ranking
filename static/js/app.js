@@ -94,6 +94,9 @@ async function handleLoadSample() {
 async function loadPRs() {
     try {
         const response = await fetch('/api/prs');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
         currentPRs = await response.json();
     } catch (error) {
         console.error('Error loading PRs:', error);
@@ -156,6 +159,9 @@ function renderPRList() {
 async function showPRDetail(prId) {
     try {
         const response = await fetch(`/api/pr/${prId}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
         currentPR = await response.json();
 
         prListSection.classList.add('hidden');
@@ -255,6 +261,10 @@ async function saveRanking() {
             })
         });
 
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const data = await response.json();
 
         if (data.success) {
@@ -281,6 +291,9 @@ async function saveRanking() {
 async function handleExport(format) {
     try {
         const response = await fetch(`/api/export/${format}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
         const blob = await response.blob();
 
         const url = window.URL.createObjectURL(blob);
