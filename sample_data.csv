@@ -1,0 +1,9 @@
+pr_id,pr_title,pr_url,link_url,link_text
+1,Fix bug in authentication,https://github.com/example/repo/pull/1,https://docs.python.org/3/library/auth.html,Python Auth Documentation
+1,Fix bug in authentication,https://github.com/example/repo/pull/1,https://stackoverflow.com/questions/12345/auth-issue,StackOverflow Discussion
+1,Fix bug in authentication,https://github.com/example/repo/pull/1,https://github.com/example/other-repo/issues/42,Related Issue
+2,Add new feature for CSV export,https://github.com/example/repo/pull/2,https://docs.python.org/3/library/csv.html,CSV Module Documentation
+2,Add new feature for CSV export,https://github.com/example/repo/pull/2,https://pandas.pydata.org/docs/,Pandas Documentation
+3,Update README with installation instructions,https://github.com/example/repo/pull/3,https://docs.github.com/en/get-started,GitHub Getting Started
+3,Update README with installation instructions,https://github.com/example/repo/pull/3,https://www.markdownguide.org/,Markdown Guide
+3,Update README with installation instructions,https://github.com/example/repo/pull/3,https://shields.io/,Shields.io for Badges
