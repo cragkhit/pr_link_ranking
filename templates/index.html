@@ -24,9 +24,10 @@
                     <button id="load-button" class="btn btn-primary">Load CSV</button>
                 </div>
                 <div class="load-option">
-                    <h3>Use Sample Data</h3>
-                    <p class="help-text">Load pre-populated sample data to try the application</p>
-                    <button id="load-sample-button" class="btn btn-secondary">Load Sample Data</button>
+                    <h3>Upload Ranking CSV</h3>
+                    <p class="help-text">Upload a ranking CSV file with pre-populated ranks</p>
+                    <input type="file" id="ranking-file-input" accept=".csv">
+                    <button id="load-ranking-button" class="btn btn-secondary">Load Ranking CSV</button>
                 </div>
             </div>
             <div id="load-status" class="status-message"></div>
@@ -43,6 +44,12 @@
         <div id="pr-detail-section" class="section hidden">
             <button id="back-button" class="btn btn-secondary">← Back to PR List</button>
             <div id="pr-detail"></div>
+        </div>
+
+        <!-- Links View Section -->
+        <div id="links-view-section" class="section hidden">
+            <button id="back-to-list-button" class="btn btn-secondary">← Back to PR List</button>
+            <div id="links-view"></div>
         </div>
 
         <!-- Export Section -->
