@@ -26,8 +26,9 @@ def load_csv_data(filepath):
     """Load PR and link data from CSV file.
     
     Args:
-        filepath: Path to CSV file with columns: uid, pr_link, repo, pr_title, media_type, isGithub, links, link_count
-                  links column can be in JSON, Python literal, or comma-separated format
+        filepath: Path to CSV file with columns: uid, pr_link, repo, pr_title, link, label_word, link_count
+                  Optional: media_type, isGithub
+                  link and label_word columns can be in JSON, Python literal, or comma-separated format
     
     Returns:
         Dictionary mapping pr_link to PR data with links
@@ -37,7 +38,7 @@ def load_csv_data(filepath):
         UnicodeDecodeError: If file encoding is not UTF-8
     """
     prs = {}
-    required_columns = {'uid', 'pr_link', 'repo', 'pr_title', 'media_type', 'isGithub', 'links', 'link_count'}
+    required_columns = {'uid', 'pr_link', 'repo', 'pr_title'}
     
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -47,12 +48,24 @@ def load_csv_data(filepath):
             missing = required_columns - set(reader.fieldnames or [])
             raise KeyError(f"Missing required columns: {', '.join(missing)}")
         
+        # Check if optional columns exist
+        has_label_word = 'label_word' in (reader.fieldnames or [])
+        has_link_column = 'link' in (reader.fieldnames or [])
+        has_links_column = 'links' in (reader.fieldnames or [])
+        
         for row in reader:
             pr_link = row['pr_link']
             
             if pr_link not in prs:
-                # Parse links - handle multiple formats
-                links_str = row['links'].strip()
+                # Parse links - handle both 'link' and 'links' column names
+                links_str = ''
+                if has_link_column:
+                    links_str = row.get('link', '').strip()
+                elif has_links_column:
+                    links_str = row.get('links', '').strip()
+                else:
+                    links_str = ''
+                    
                 links_list = []
                 
                 if links_str:
@@ -76,32 +89,51 @@ def load_csv_data(filepath):
                             # Fall back to comma-separated
                             links_list = [link.strip() for link in links_str.split(',') if link.strip()]
                 
+                # Parse label_word if present
+                label_words = []
+                if has_label_word:
+                    label_words_str = row.get('label_word', '').strip()
+                    if label_words_str:
+                        try:
+                            # Try to parse as Python literal (e.g., ['#32347', 'MIGRATION.MD'])
+                            label_words = ast.literal_eval(label_words_str)
+                            if not isinstance(label_words, list):
+                                label_words = [label_words]
+                        except:
+                            # Fall back to comma-separated
+                            label_words = [lw.strip() for lw in label_words_str.split(',') if lw.strip()]
+                
                 prs[pr_link] = {
-                    'uid': row['uid'],  # Use UID from CSV
+                    'uid': row.get('uid', ''),
                     'pr_link': pr_link,
                     'pr_id': pr_link,  # Keep for backward compatibility with frontend
                     'repo': row['repo'],
                     'pr_title': row['pr_title'],
-                    'media_type': row['media_type'],
-                    'isGithub': row['isGithub'],
-                    'link_count': row['link_count'],
+                    'media_type': row.get('media_type', ''),
+                    'isGithub': row.get('isGithub', ''),
+                    'link_count': row.get('link_count', len(links_list)),
                     'links': []
                 }
                 
-                # Add parsed links
+                # Add parsed links with matching labels
                 for idx, link in enumerate(links_list):
+                    # Get corresponding label for this link index
+                    label_text = label_words[idx] if idx < len(label_words) else ''
+                    
                     if isinstance(link, dict):
                         # If link is already a dict with url and text
                         prs[pr_link]['links'].append({
                             'link_url': link.get('url', link.get('link_url', '')),
-                            'link_text': link.get('text', link.get('link_text', '')),
+                            'link_text': label_text or link.get('text', link.get('link_text', '')),
+                            'label_word': label_text,
                             'rank': None
                         })
                     else:
                         # If link is just a URL string
                         prs[pr_link]['links'].append({
                             'link_url': str(link),
-                            'link_text': f'Link {idx + 1}',
+                            'link_text': label_text or f'Link {idx + 1}',
+                            'label_word': label_text,
                             'rank': None
                         })
     
@@ -111,10 +143,12 @@ def load_csv_data(filepath):
 def load_ranking_csv_data(filepath):
     """Load PR data with pre-populated rankings from ranking CSV file.
     
-    Supports two formats:
-    1. New format: uid, pr_link, repo, pr_title, media_type, isGithub, link_count, links, ranks
-       (links and ranks are comma-separated values)
-    2. Old format: uid, pr_link, repo, pr_title, media_type, isGithub, link_count, link_url, link_text, rank
+    Supports multiple formats:
+    1. New format with labels: uid, pr_link, repo, pr_title, media_type, isGithub, link_count, link, label_word, link_index, rank
+       (one row per link with label matching)
+    2. Combined format: uid, pr_link, repo, pr_title, media_type, isGithub, link_count, links, label_word, ranks
+       (links, label_word, ranks are comma-separated or list formats)
+    3. Old format: uid, pr_link, repo, pr_title, media_type, isGithub, link_count, link_url, link_text, rank
        (one row per link)
     
     Returns:
@@ -132,11 +166,14 @@ def load_ranking_csv_data(filepath):
         fieldnames = set(reader.fieldnames or [])
         
         # Determine format based on available columns
+        has_labels = 'label_word' in fieldnames
+        has_link_index = 'link_index' in fieldnames
+        is_new_format_labels = has_labels and has_link_index and 'link' in fieldnames
         is_new_format = 'links' in fieldnames and 'ranks' in fieldnames
         is_old_format = 'link_url' in fieldnames and 'rank' in fieldnames
         
-        if not is_new_format and not is_old_format:
-            raise KeyError("CSV must contain either (links, ranks) columns or (link_url, rank) columns")
+        if not (is_new_format_labels or is_new_format or is_old_format):
+            raise KeyError("CSV must contain either (link, label_word, link_index), (links, ranks), or (link_url, rank) columns")
         
         if 'uid' not in fieldnames or 'pr_link' not in fieldnames:
             raise KeyError("Missing required columns: uid, pr_link")
@@ -158,42 +195,10 @@ def load_ranking_csv_data(filepath):
                 }
                 rankings[pr_link] = {}
             
-            if is_new_format:
-                # Parse new format with combined links and ranks
-                links_str = row.get('links', '').strip()
-                ranks_str = row.get('ranks', '').strip()
-                
-                if links_str:
-                    links_list = [link.strip() for link in links_str.split(',') if link.strip()]
-                    ranks_list = [r.strip() for r in ranks_str.split(',') if r.strip() or True]  # Keep empty strings
-                    
-                    # Split ranks to match links
-                    if ranks_str:
-                        ranks_list = ranks_str.split(',')
-                    else:
-                        ranks_list = ['' for _ in links_list]
-                    
-                    for idx, link_url in enumerate(links_list):
-                        rank = None
-                        rank_str = ranks_list[idx].strip() if idx < len(ranks_list) else ''
-                        
-                        if rank_str and rank_str.lower() != 'none':
-                            try:
-                                rank = int(rank_str)
-                            except ValueError:
-                                pass
-                        
-                        prs[pr_link]['links'].append({
-                            'link_url': link_url,
-                            'link_text': f'Link {idx + 1}',
-                            'rank': rank
-                        })
-                        
-                        if rank is not None:
-                            rankings[pr_link][link_url] = rank
-            else:
-                # Parse old format with one row per link
-                link_url = row['link_url']
+            if is_new_format_labels:
+                # Parse new format with link, label_word, and rank
+                link_url = row.get('link', '').strip()
+                label_word = row.get('label_word', '').strip()
                 rank_str = row.get('rank', '').strip()
                 
                 rank = None
@@ -205,7 +210,82 @@ def load_ranking_csv_data(filepath):
                 
                 prs[pr_link]['links'].append({
                     'link_url': link_url,
-                    'link_text': row.get('link_text', f'Link'),
+                    'link_text': label_word or f'Link',
+                    'label_word': label_word,
+                    'rank': rank
+                })
+                
+                if rank is not None:
+                    rankings[pr_link][link_url] = rank
+            elif is_new_format:
+                # Parse new format with combined links and ranks
+                links_str = row.get('links', '').strip()
+                label_words_str = row.get('label_word', '').strip()
+                ranks_str = row.get('ranks', '').strip()
+                
+                if links_str:
+                    # Parse links
+                    links_list = []
+                    try:
+                        links_data = ast.literal_eval(links_str)
+                        links_list = links_data if isinstance(links_data, list) else [links_data]
+                    except:
+                        links_list = [link.strip() for link in links_str.split(',') if link.strip()]
+                    
+                    # Parse label_words
+                    label_words = []
+                    if label_words_str:
+                        try:
+                            label_data = ast.literal_eval(label_words_str)
+                            label_words = label_data if isinstance(label_data, list) else [label_data]
+                        except:
+                            label_words = [lw.strip() for lw in label_words_str.split(',') if lw.strip()]
+                    
+                    # Parse ranks
+                    ranks_list = []
+                    if ranks_str:
+                        ranks_list = ranks_str.split(',')
+                    else:
+                        ranks_list = ['' for _ in links_list]
+                    
+                    # Split ranks to match links and labels
+                    for idx, link_url in enumerate(links_list):
+                        label_word = label_words[idx] if idx < len(label_words) else ''
+                        rank = None
+                        rank_str = ranks_list[idx].strip() if idx < len(ranks_list) else ''
+                        
+                        if rank_str and rank_str.lower() != 'none':
+                            try:
+                                rank = int(rank_str)
+                            except ValueError:
+                                pass
+                        
+                        prs[pr_link]['links'].append({
+                            'link_url': link_url,
+                            'link_text': label_word or f'Link {idx + 1}',
+                            'label_word': label_word,
+                            'rank': rank
+                        })
+                        
+                        if rank is not None:
+                            rankings[pr_link][link_url] = rank
+            else:
+                # Parse old format with one row per link
+                link_url = row['link_url']
+                rank_str = row.get('rank', '').strip()
+                label_text = row.get('link_text', f'Link')
+                
+                rank = None
+                if rank_str and rank_str.lower() != 'none':
+                    try:
+                        rank = int(rank_str)
+                    except ValueError:
+                        pass
+                
+                prs[pr_link]['links'].append({
+                    'link_url': link_url,
+                    'link_text': label_text,
+                    'label_word': label_text,
                     'rank': rank
                 })
                 
@@ -251,7 +331,10 @@ def load_data():
             'pr_count': len(current_data['prs'])
         })
     except Exception as e:
-        return jsonify({'error': 'Failed to load CSV file'}), 500
+        print(f"Error loading CSV: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to load CSV file: {str(e)}'}), 500
     finally:
         # Always clean up the uploaded file
         if filepath and os.path.exists(filepath):
@@ -305,7 +388,10 @@ def load_ranking():
             'pr_count': len(current_data['prs'])
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error loading ranking CSV: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to load ranking CSV: {str(e)}'}), 500
     finally:
         # Always clean up the uploaded file
         if filepath and os.path.exists(filepath):
@@ -365,47 +451,40 @@ def save_ranking():
     
     # Save rankings
     current_data['rankings'][pr_id] = rankings
-    
     return jsonify({'success': True})
 
 
 @app.route('/api/export/csv', methods=['GET'])
 def export_csv():
-    """Export rankings as CSV with combined ranks."""
+    """Export rankings as CSV with combined ranks and labels."""
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Write header
-    writer.writerow(['uid', 'pr_link', 'repo', 'pr_title', 'media_type', 'isGithub', 'link_count', 'links', 'ranks'])
+    # Write header - uid as first column
+    writer.writerow(['uid', 'pr_link', 'repo', 'pr_title', 'media_type', 'isGithub', 'link_count', 'link', 'label_word', 'link_index', 'rank'])
     
-    # Write data - one row per PR with combined links and ranks
+    # Write data - one row per link with label_word matching
     for pr_id, pr in current_data['prs'].items():
         rankings = current_data['rankings'].get(pr_id, {})
         
-        # Collect links and their corresponding ranks
-        links_list = []
-        ranks_list = []
-        
-        for link in pr['links']:
-            links_list.append(link['link_url'])
+        # Write one row per link with its matching label
+        for link_idx, link in enumerate(pr['links']):
             rank = rankings.get(link['link_url'], '')
-            ranks_list.append(str(rank) if rank != '' else '')
-        
-        # Join links and ranks as comma-separated values
-        links_str = ','.join(links_list)
-        ranks_str = ','.join(ranks_list)
-        
-        writer.writerow([
-            pr.get('uid', ''),
-            pr.get('pr_link', pr_id),
-            pr.get('repo', ''),
-            pr['pr_title'],
-            pr.get('media_type', ''),
-            pr.get('isGithub', ''),
-            pr.get('link_count', len(pr['links'])),
-            links_str,
-            ranks_str
-        ])
+            label_word = link.get('label_word', '')
+            
+            writer.writerow([
+                pr.get('uid', ''),
+                pr.get('pr_link', pr_id),
+                pr.get('repo', ''),
+                pr['pr_title'],
+                pr.get('media_type', ''),
+                pr.get('isGithub', ''),
+                pr.get('link_count', len(pr['links'])),
+                link['link_url'],
+                label_word,
+                link_idx,
+                str(rank) if rank != '' else ''
+            ])
     
     # Create response
     output.seek(0)
@@ -419,7 +498,7 @@ def export_csv():
 
 @app.route('/api/export/json', methods=['GET'])
 def export_json():
-    """Export rankings as JSON."""
+    """Export rankings as JSON with label matching."""
     result = []
     
     for pr_id, pr in current_data['prs'].items():
@@ -437,10 +516,12 @@ def export_json():
             'links': []
         }
         
-        for link in pr['links']:
+        for idx, link in enumerate(pr['links']):
             pr_data['links'].append({
                 'link_url': link['link_url'],
-                'link_text': link['link_text'],
+                'link_text': link.get('link_text'),
+                'label_word': link.get('label_word', ''),
+                'link_index': idx,
                 'rank': rankings.get(link['link_url'], None)
             })
         
