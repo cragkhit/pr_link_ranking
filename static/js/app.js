@@ -269,6 +269,7 @@ function renderPRDetail() {
                         class="rank-input" 
                         min="1" 
                         value="${link.rank || ''}"
+                        data-link-index="${index}"
                         data-link-url="${escapeHtml(link.link_url)}"
                         placeholder="Enter rank"
                     >
@@ -385,6 +386,7 @@ async function saveLinkRankings() {
     const rankings = {};
     
     // Assign ranks based on current order (1 = top/highest relevance)
+    // Key by link_url so ranking stays tied to the link regardless of position
     currentPR.links.forEach((link, index) => {
         rankings[link.link_url] = index + 1;
     });

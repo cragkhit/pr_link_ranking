@@ -217,6 +217,12 @@ def load_ranking_csv_data(filepath):
                 
                 if rank is not None:
                     rankings[pr_link][link_url] = rank
+                    # also store by index if provided
+                    try:
+                        link_index = int(row.get('link_index', '').strip())
+                        rankings[pr_link][str(link_index)] = rank
+                    except Exception:
+                        pass
             elif is_new_format:
                 # Parse new format with combined links and ranks
                 links_str = row.get('links', '').strip()
@@ -269,6 +275,8 @@ def load_ranking_csv_data(filepath):
                         
                         if rank is not None:
                             rankings[pr_link][link_url] = rank
+                            # also set index-keyed mapping
+                            rankings[pr_link][str(idx)] = rank
             else:
                 # Parse old format with one row per link
                 link_url = row['link_url']
@@ -291,6 +299,7 @@ def load_ranking_csv_data(filepath):
                 
                 if rank is not None:
                     rankings[pr_link][link_url] = rank
+                    # no index information in old format
     
     return prs, rankings
 
@@ -381,7 +390,22 @@ def load_ranking():
         # Load ranking data
         prs_data, rankings_data = load_ranking_csv_data(filepath)
         current_data['prs'] = prs_data
-        current_data['rankings'] = rankings_data
+        # Normalize rankings into structure with by_index and by_url
+        normalized = {}
+        for pr_link, rk in rankings_data.items():
+            normalized[pr_link] = {
+                'by_index': {},
+                'by_url': {}
+            }
+            for key, val in rk.items():
+                # If the key is an integer (index), put into by_index, otherwise by_url
+                try:
+                    ik = int(key)
+                    normalized[pr_link]['by_index'][ik] = int(val)
+                except Exception:
+                    normalized[pr_link]['by_url'][str(key)] = val
+
+        current_data['rankings'] = normalized
         
         return jsonify({
             'success': True,
@@ -406,10 +430,20 @@ def get_prs():
     # Add ranking status
     for pr in prs_list:
         pr_id = pr['pr_id']
+        ranked = False
         if pr_id in current_data['rankings']:
-            pr['ranked'] = len(current_data['rankings'][pr_id]) == len(pr['links'])
-        else:
-            pr['ranked'] = False
+            rk = current_data['rankings'][pr_id]
+            by_index = rk.get('by_index', {})
+            by_url = rk.get('by_url', {})
+
+            # Count how many links have a recorded rank either by index or by URL
+            count = 0
+            for idx, link in enumerate(pr['links']):
+                if (isinstance(by_index, dict) and (idx in by_index or str(idx) in by_index)) or (link.get('link_url') in by_url):
+                    count += 1
+
+            ranked = (count == len(pr['links']))
+        pr['ranked'] = ranked
     
     return jsonify(prs_list)
 
@@ -425,13 +459,31 @@ def get_pr(pr_id):
         return jsonify({'error': 'PR not found'}), 404
     
     pr = current_data['prs'][pr_id].copy()
-    
-    # Add current rankings if they exist
+
+    # Add current rankings if they exist (support both index- and URL-keyed rankings)
     if pr_id in current_data['rankings']:
-        for link in pr['links']:
-            link_url = link['link_url']
-            if link_url in current_data['rankings'][pr_id]:
-                link['rank'] = current_data['rankings'][pr_id][link_url]
+        rk = current_data['rankings'][pr_id]
+        by_index = rk.get('by_index', {})
+        by_url = rk.get('by_url', {})
+
+        for idx, link in enumerate(pr['links']):
+            link_url = link.get('link_url')
+            
+            # Preference: URL mapping first (from user drag/drop), then index mapping (from CSV load)
+            if link_url in by_url:
+                link['rank'] = by_url[link_url]
+                continue
+                
+            if isinstance(by_index, dict):
+                if idx in by_index:
+                    link['rank'] = by_index[idx]
+                    continue
+                if str(idx) in by_index:
+                    try:
+                        link['rank'] = int(by_index[str(idx)])
+                        continue
+                    except:
+                        pass
     
     return jsonify(pr)
 
@@ -449,8 +501,34 @@ def save_ranking():
     if pr_id not in current_data['prs']:
         return jsonify({'error': 'PR not found'}), 404
     
-    # Save rankings
-    current_data['rankings'][pr_id] = rankings
+    # Normalize incoming rankings: keys may be link indices (string/int) or URLs
+    by_index = {}
+    by_url = {}
+    for k, v in rankings.items():
+        # try integer index
+        try:
+            ik = int(k)
+            by_index[ik] = int(v)
+            continue
+        except Exception:
+            pass
+
+        # otherwise treat as URL
+        by_url[str(k)] = v
+
+    # Merge with existing URL-keyed rankings so we don't lose previously-loaded ranks
+    existing = current_data['rankings'].get(pr_id, {'by_index': {}, 'by_url': {}})
+    existing_by_url = existing.get('by_url', {}) if isinstance(existing, dict) else {}
+
+    # final by_url: start from existing, then override with any incoming URL mappings
+    final_by_url = dict(existing_by_url)
+    for k, v in by_url.items():
+        final_by_url[str(k)] = v
+
+    current_data['rankings'][pr_id] = {
+        'by_index': by_index,
+        'by_url': final_by_url
+    }
     return jsonify({'success': True})
 
 
@@ -465,11 +543,20 @@ def export_csv():
     
     # Write data - one row per link with label_word matching
     for pr_id, pr in current_data['prs'].items():
-        rankings = current_data['rankings'].get(pr_id, {})
-        
+        rk = current_data['rankings'].get(pr_id, {'by_index': {}, 'by_url': {}})
+        by_index = rk.get('by_index', {})
+        by_url = rk.get('by_url', {})
+
         # Write one row per link with its matching label
         for link_idx, link in enumerate(pr['links']):
-            rank = rankings.get(link['link_url'], '')
+            # Prefer URL-keyed rank (from user drag/drop save), fallback to index-keyed rank (from CSV load)
+            rank = ''
+            link_url = link.get('link_url', '')
+            if link_url in by_url:
+                rank = by_url.get(link_url, '')
+            elif isinstance(by_index, dict) and (link_idx in by_index or str(link_idx) in by_index):
+                rank = by_index.get(link_idx, by_index.get(str(link_idx), ''))
+
             label_word = link.get('label_word', '')
             
             writer.writerow([
@@ -516,13 +603,25 @@ def export_json():
             'links': []
         }
         
+        rk = current_data['rankings'].get(pr_id, {'by_index': {}, 'by_url': {}})
+        by_index = rk.get('by_index', {})
+        by_url = rk.get('by_url', {})
+
         for idx, link in enumerate(pr['links']):
+            # Determine rank preferring URL mapping (from user drag/drop save), fallback to index mapping
+            rank_val = None
+            link_url = link.get('link_url')
+            if link_url in by_url:
+                rank_val = by_url.get(link_url)
+            elif isinstance(by_index, dict) and (idx in by_index or str(idx) in by_index):
+                rank_val = by_index.get(idx, by_index.get(str(idx), None))
+
             pr_data['links'].append({
                 'link_url': link['link_url'],
                 'link_text': link.get('link_text'),
                 'label_word': link.get('label_word', ''),
                 'link_index': idx,
-                'rank': rankings.get(link['link_url'], None)
+                'rank': rank_val
             })
         
         result.append(pr_data)
