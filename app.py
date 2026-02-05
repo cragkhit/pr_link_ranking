@@ -636,6 +636,80 @@ def export_json():
     )
 
 
+@app.route('/api/export/final_report', methods=['GET'])
+def export_final_report():
+    """Export a simplified final report CSV with columns: uid, link_label, ranking
+
+    - `link_label` is a comma-separated list of `label_word` values in original link order
+    - `ranking` is a comma-separated list (inverse mapping) where element i is the original
+      index that has 0-based rank i. For example, if index 0 has rank 3, index 1 has rank 1,
+      index 2 has rank 2, index 3 has rank 4, then ranking=[2,1,0,3] means rank 1→idx2, rank 2→idx1, etc.
+    """
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(['uid', 'link_label', 'ranking'])
+
+    for pr_id, pr in current_data['prs'].items():
+        uid = pr.get('uid', '')
+        links = pr.get('links', [])
+
+        # Get rankings mapping for this PR
+        rk = current_data['rankings'].get(pr_id, {'by_index': {}, 'by_url': {}})
+        by_index = rk.get('by_index', {})
+        by_url = rk.get('by_url', {})
+
+        # Build link_label list in original order
+        link_labels = []
+        idx_to_rank = {}  # Map original index -> rank (1-based)
+
+        for idx, link in enumerate(links):
+            link_labels.append(link.get('label_word', '') or '')
+
+            # Prefer URL-keyed rank (user-saved), fallback to index-keyed (CSV)
+            link_url = link.get('link_url', '')
+            rank_val = None
+            if link_url and link_url in by_url:
+                try:
+                    rank_val = int(by_url[link_url])
+                except Exception:
+                    rank_val = None
+            elif isinstance(by_index, dict) and (idx in by_index or str(idx) in by_index):
+                try:
+                    rank_val = int(by_index.get(idx, by_index.get(str(idx))))
+                except Exception:
+                    rank_val = None
+
+            if rank_val is not None:
+                idx_to_rank[idx] = rank_val
+
+        # Build inverse mapping: for each 0-based rank position, which original index has that rank?
+        rank_to_idx = {}
+        for idx, rank in idx_to_rank.items():
+            rank_to_idx[rank - 1] = idx  # Convert to 0-based rank key
+
+        # Build ranking list: for each rank position 0, 1, 2, ... find which index has that rank
+        ranking_elems = []
+        for rank_pos in range(len(links)):
+            if rank_pos in rank_to_idx:
+                ranking_elems.append(str(rank_to_idx[rank_pos]))
+            else:
+                ranking_elems.append('')
+
+        link_label_str = ','.join(link_labels)
+        ranking_str = ','.join(ranking_elems)
+
+        writer.writerow([uid, link_label_str, ranking_str])
+
+    output.seek(0)
+    return send_file(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name='final_report.csv'
+    )
+
+
 if __name__ == '__main__':
     # Get debug mode from environment, default to False for production safety
     debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'

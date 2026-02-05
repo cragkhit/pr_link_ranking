@@ -24,6 +24,7 @@ const backToListButton = document.getElementById('back-to-list-button');
 
 const exportCsvButton = document.getElementById('export-csv-button');
 const exportJsonButton = document.getElementById('export-json-button');
+const exportFinalReportButton = document.getElementById('export-final-report-button');
 
 // Event Listeners
 loadButton.addEventListener('click', handleLoadFile);
@@ -32,6 +33,7 @@ backButton.addEventListener('click', showPRList);
 backToListButton.addEventListener('click', showPRList);
 exportCsvButton.addEventListener('click', () => handleExport('csv'));
 exportJsonButton.addEventListener('click', () => handleExport('json'));
+exportFinalReportButton.addEventListener('click', handleFinalReport);
 
 // Load File Handler
 async function handleLoadFile() {
@@ -634,6 +636,27 @@ async function handleExport(format) {
     } catch (error) {
         console.error('Error exporting:', error);
         alert('Error exporting data');
+    }
+}
+
+// Final Report: CSV with columns: uid, link_label, ranking
+async function handleFinalReport() {
+    try {
+        const response = await fetch('/api/export/final_report');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `final_report.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('Error exporting final report:', error);
+        alert('Error exporting final report');
     }
 }
 
