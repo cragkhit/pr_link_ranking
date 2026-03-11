@@ -1,39 +1,51 @@
 // Global state
 let currentPRs = [];
 let currentPR = null;
+let isReviewMode = false;
 
-// DOM Elements
-const loadSection = document.getElementById('load-section');
-const prListSection = document.getElementById('pr-list-section');
-const prDetailSection = document.getElementById('pr-detail-section');
-const linksViewSection = document.getElementById('links-view-section');
-const exportSection = document.getElementById('export-section');
+// DOM Elements - will be initialized after DOM loads
+let loadSection, prListSection, prDetailSection, linksViewSection, exportSection;
+let fileInput, loadButton, rankingFileInput, loadRankingButton, reviewFileInput, loadReviewButton, loadStatus;
+let prStats, prList, prDetail, linksView, backButton, backToListButton;
+let exportCsvButton, exportJsonButton, exportFinalReportButton;
 
-const fileInput = document.getElementById('file-input');
-const loadButton = document.getElementById('load-button');
-const rankingFileInput = document.getElementById('ranking-file-input');
-const loadRankingButton = document.getElementById('load-ranking-button');
-const loadStatus = document.getElementById('load-status');
+// Initialize DOM elements after page loads
+document.addEventListener('DOMContentLoaded', function() {
+    loadSection = document.getElementById('load-section');
+    prListSection = document.getElementById('pr-list-section');
+    prDetailSection = document.getElementById('pr-detail-section');
+    linksViewSection = document.getElementById('links-view-section');
+    exportSection = document.getElementById('export-section');
 
-const prStats = document.getElementById('pr-stats');
-const prList = document.getElementById('pr-list');
-const prDetail = document.getElementById('pr-detail');
-const linksView = document.getElementById('links-view');
-const backButton = document.getElementById('back-button');
-const backToListButton = document.getElementById('back-to-list-button');
+    fileInput = document.getElementById('file-input');
+    loadButton = document.getElementById('load-button');
+    rankingFileInput = document.getElementById('ranking-file-input');
+    loadRankingButton = document.getElementById('load-ranking-button');
+    reviewFileInput = document.getElementById('review-file-input');
+    loadReviewButton = document.getElementById('load-review-button');
+    loadStatus = document.getElementById('load-status');
 
-const exportCsvButton = document.getElementById('export-csv-button');
-const exportJsonButton = document.getElementById('export-json-button');
-const exportFinalReportButton = document.getElementById('export-final-report-button');
+    prStats = document.getElementById('pr-stats');
+    prList = document.getElementById('pr-list');
+    prDetail = document.getElementById('pr-detail');
+    linksView = document.getElementById('links-view');
+    backButton = document.getElementById('back-button');
+    backToListButton = document.getElementById('back-to-list-button');
 
-// Event Listeners
-loadButton.addEventListener('click', handleLoadFile);
-loadRankingButton.addEventListener('click', handleLoadRankingFile);
-backButton.addEventListener('click', showPRList);
-backToListButton.addEventListener('click', showPRList);
-exportCsvButton.addEventListener('click', () => handleExport('csv'));
-exportJsonButton.addEventListener('click', () => handleExport('json'));
-exportFinalReportButton.addEventListener('click', handleFinalReport);
+    exportCsvButton = document.getElementById('export-csv-button');
+    exportJsonButton = document.getElementById('export-json-button');
+    exportFinalReportButton = document.getElementById('export-final-report-button');
+
+    // Event Listeners
+    loadButton.addEventListener('click', handleLoadFile);
+    loadRankingButton.addEventListener('click', handleLoadRankingFile);
+    loadReviewButton.addEventListener('click', handleLoadReviewFile);
+    backButton.addEventListener('click', showPRList);
+    backToListButton.addEventListener('click', showPRList);
+    exportCsvButton.addEventListener('click', () => handleExport('csv'));
+    exportJsonButton.addEventListener('click', () => handleExport('json'));
+    exportFinalReportButton.addEventListener('click', handleFinalReport);
+});
 
 // Load File Handler
 async function handleLoadFile() {
@@ -48,6 +60,8 @@ async function handleLoadFile() {
 
     try {
         loadButton.disabled = true;
+        loadRankingButton.disabled = true;
+        loadReviewButton.disabled = true;
         showStatus('Loading...', 'info');
 
         const response = await fetch('/api/load', {
@@ -61,6 +75,8 @@ async function handleLoadFile() {
             showStatus(`Error: ${data.error}`, 'error');
         } else {
             showStatus(`Successfully loaded ${data.pr_count} pull requests`, 'success');
+            isReviewMode = false;
+            console.log('Setting isReviewMode to false for ranking mode');
             await loadPRs();
             showPRList();
         }
@@ -68,6 +84,8 @@ async function handleLoadFile() {
         showStatus(`Error: ${error.message}`, 'error');
     } finally {
         loadButton.disabled = false;
+        loadRankingButton.disabled = false;
+        loadReviewButton.disabled = false;
     }
 }
 
@@ -83,7 +101,9 @@ async function handleLoadRankingFile() {
     formData.append('file', file);
 
     try {
+        loadButton.disabled = true;
         loadRankingButton.disabled = true;
+        loadReviewButton.disabled = true;
         showStatus('Loading ranking data...', 'info');
 
         const response = await fetch('/api/load_ranking', {
@@ -97,13 +117,59 @@ async function handleLoadRankingFile() {
             showStatus(`Error: ${data.error}`, 'error');
         } else {
             showStatus(`Successfully loaded ${data.pr_count} pull requests with rankings`, 'success');
+            isReviewMode = false;
+            console.log('Setting isReviewMode to false for ranking mode (ranking CSV)');
             await loadPRs();
             showPRList();
         }
     } catch (error) {
         showStatus(`Error: ${error.message}`, 'error');
     } finally {
+        loadButton.disabled = false;
         loadRankingButton.disabled = false;
+        loadReviewButton.disabled = false;
+    }
+}
+
+// Load Review File Handler
+async function handleLoadReviewFile() {
+    const file = reviewFileInput.files[0];
+    if (!file) {
+        showStatus('Please select a CSV file for review', 'error');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        loadButton.disabled = true;
+        loadRankingButton.disabled = true;
+        loadReviewButton.disabled = true;
+        showStatus('Loading data for review...', 'info');
+
+        const response = await fetch('/api/load_review', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            showStatus(`Error: ${data.error}`, 'error');
+        } else {
+            showStatus(`Successfully loaded ${data.pr_count} pull requests for review`, 'success');
+            isReviewMode = true;
+            console.log('Setting isReviewMode to true for review mode');
+            await loadPRs();
+            showPRList();
+        }
+    } catch (error) {
+        showStatus(`Error: ${error.message}`, 'error');
+    } finally {
+        loadButton.disabled = false;
+        loadRankingButton.disabled = false;
+        loadReviewButton.disabled = false;
     }
 }
 
@@ -130,10 +196,63 @@ function showStatus(message, type) {
 
 // Show PR List View
 function showPRList() {
+    console.log('showPRList called. Current isReviewMode:', isReviewMode);
+    console.log('DOM ready state:', document.readyState);
+    
+    // Ensure DOM elements are available
+    if (!exportSection) {
+        console.error('DOM elements not ready yet, retrying in 100ms...');
+        setTimeout(showPRList, 100);
+        return;
+    }
+    
     prListSection.classList.remove('hidden');
     prDetailSection.classList.add('hidden');
     linksViewSection.classList.add('hidden');
     exportSection.classList.remove('hidden');
+
+    // Get the review export button
+    const exportReviewCsvButton = document.getElementById('export-review-csv-button');
+    console.log('exportReviewCsvButton element found:', exportReviewCsvButton);
+    console.log('All buttons in export section:', document.querySelectorAll('#export-section button'));
+    console.log('exportReviewCsvButton initial className:', exportReviewCsvButton ? exportReviewCsvButton.className : 'null');
+
+    // Show/hide export buttons based on mode
+    if (isReviewMode) {
+        console.log('Setting review mode - hiding standard buttons, showing review button');
+        exportCsvButton.classList.add('hidden');
+        exportJsonButton.classList.add('hidden');
+        exportFinalReportButton.classList.add('hidden');
+        
+        if (exportReviewCsvButton) {
+            exportReviewCsvButton.classList.remove('hidden');
+            console.log('Review button classes after remove hidden:', exportReviewCsvButton.className);
+            console.log('Review button is now visible:', !exportReviewCsvButton.classList.contains('hidden'));
+            console.log('Review button text:', exportReviewCsvButton.textContent);
+            
+            // Set up event listener if not already set up
+            if (!exportReviewCsvButton.dataset.eventListenerSetup) {
+                exportReviewCsvButton.addEventListener('click', () => {
+                    console.log('Review export button clicked!');
+                    handleExport('csv');
+                });
+                exportReviewCsvButton.dataset.eventListenerSetup = 'true';
+                console.log('Event listener attached to review button');
+            }
+        } else {
+            console.error('exportReviewCsvButton is null!');
+        }
+    } else {
+        console.log('Setting ranking mode - showing standard buttons, hiding review button');
+        exportCsvButton.classList.remove('hidden');
+        exportJsonButton.classList.remove('hidden');
+        exportFinalReportButton.classList.remove('hidden');
+        
+        if (exportReviewCsvButton) {
+            exportReviewCsvButton.classList.add('hidden');
+            console.log('Review button classes after add hidden:', exportReviewCsvButton.className);
+        }
+    }
 
     renderStats();
     renderPRList();
@@ -141,12 +260,21 @@ function showPRList() {
 
 // Render Stats
 function renderStats() {
-    const rankedCount = currentPRs.filter(pr => pr.ranked).length;
-    const totalCount = currentPRs.length;
+    if (isReviewMode) {
+        const reviewedCount = currentPRs.filter(pr => pr.reviewed).length;
+        const totalCount = currentPRs.length;
 
-    prStats.innerHTML = `
-        <strong>Progress:</strong> ${rankedCount} of ${totalCount} PRs ranked
-    `;
+        prStats.innerHTML = `
+            <strong>Review Progress:</strong> ${reviewedCount} of ${totalCount} PRs reviewed
+        `;
+    } else {
+        const rankedCount = currentPRs.filter(pr => pr.ranked).length;
+        const totalCount = currentPRs.length;
+
+        prStats.innerHTML = `
+            <strong>Progress:</strong> ${rankedCount} of ${totalCount} PRs ranked
+        `;
+    }
 }
 
 // Render PR List
@@ -158,15 +286,27 @@ function renderPRList() {
     
     // Create header
     const thead = document.createElement('thead');
-    thead.innerHTML = `
-        <tr>
-            <th>UID</th>
-            <th>PR Title</th>
-            <th>Links</th>
-            <th>Status</th>
-            <th>Action</th>
-        </tr>
-    `;
+    if (isReviewMode) {
+        thead.innerHTML = `
+            <tr>
+                <th>UID</th>
+                <th>PR Title</th>
+                <th>Links</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        `;
+    } else {
+        thead.innerHTML = `
+            <tr>
+                <th>UID</th>
+                <th>PR Title</th>
+                <th>Links</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        `;
+    }
     table.appendChild(thead);
     
     // Create body
@@ -174,21 +314,34 @@ function renderPRList() {
     currentPRs.forEach((pr, index) => {
         console.log(`PR ${index}:`, pr);
         const tr = document.createElement('tr');
-        tr.className = pr.ranked ? 'ranked' : 'unranked';
+        if (isReviewMode) {
+            tr.className = pr.reviewed ? 'reviewed' : 'unreviewed';
+        } else {
+            tr.className = pr.ranked ? 'ranked' : 'unranked';
+        }
         
         const uidValue = pr.uid !== undefined ? pr.uid : (index + 1);
+        let statusText, actionText;
+        if (isReviewMode) {
+            statusText = pr.reviewed ? '✓ Reviewed' : 'Not Reviewed';
+            actionText = pr.reviewed ? 'View' : 'Review';
+        } else {
+            statusText = pr.ranked ? '✓ Ranked' : 'Not Ranked';
+            actionText = pr.ranked ? 'View' : 'Rank';
+        }
+        
         tr.innerHTML = `
             <td class="uid-cell">${uidValue}</td>
             <td class="title-cell">${escapeHtml(pr.pr_title)}</td>
             <td class="links-cell">${pr.links.length}</td>
             <td class="status-cell">
-                <span class="pr-status ${pr.ranked ? 'ranked' : 'unranked'}">
-                    ${pr.ranked ? '✓ Ranked' : 'Not Ranked'}
+                <span class="pr-status ${isReviewMode ? (pr.reviewed ? 'reviewed' : 'unreviewed') : (pr.ranked ? 'ranked' : 'unranked')}">
+                    ${statusText}
                 </span>
             </td>
             <td class="action-cell">
                 <button class="btn btn-small action-btn" data-pr-id="${pr.pr_id}">
-                    ${pr.ranked ? 'View' : 'Rank'}
+                    ${actionText}
                 </button>
             </td>
         `;
@@ -204,7 +357,11 @@ function renderPRList() {
         btn.addEventListener('click', function() {
             const prId = this.dataset.prId;
             console.log('Clicked PR ID:', prId);
-            showLinksView(prId);
+            if (isReviewMode) {
+                showReviewView(prId);
+            } else {
+                showLinksView(prId);
+            }
         });
     });
 }
@@ -381,6 +538,155 @@ function renderLinksView() {
     });
 
     document.getElementById('save-links-ranking-btn').addEventListener('click', saveLinkRankings);
+}
+
+// Show Review View
+async function showReviewView(prId) {
+    try {
+        console.log('Fetching PR details for review:', prId);
+        const encodedPrId = encodeURIComponent(prId);
+        const response = await fetch(`/api/pr/${encodedPrId}`);
+        
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorData}`);
+        }
+        
+        currentPR = await response.json();
+        console.log('Loaded PR for review:', currentPR);
+
+        prListSection.classList.add('hidden');
+        prDetailSection.classList.add('hidden');
+        linksViewSection.classList.remove('hidden');
+        exportSection.classList.add('hidden');
+
+        renderReviewView();
+    } catch (error) {
+        console.error('Error loading PR detail for review:', error);
+        alert(`Error loading PR details: ${error.message}`);
+    }
+}
+
+// Render Review View
+function renderReviewView() {
+    linksView.innerHTML = `
+        <div class="links-view-header">
+            <div class="pr-id">PR #${currentPR.uid || currentPR.pr_id}</div>
+            <h2 class="pr-title">${escapeHtml(currentPR.pr_title)}</h2>
+            <div class="pr-info">
+                <div><strong>Repository:</strong> ${escapeHtml(currentPR.repo)}</div>
+                <div><strong>Links to Review:</strong> ${currentPR.links.length}</div>
+            </div>
+        </div>
+
+        <div class="links-view-container">
+            <h3>Original PR Link</h3>
+            <div class="pr-link-display">
+                <a href="${escapeHtml(currentPR.pr_link)}" target="_blank" class="pr-link-url">
+                    ${escapeHtml(currentPR.pr_link)}
+                </a>
+            </div>
+
+            <h3 style="margin-top: 30px;">Review this PR</h3>
+            <p class="ranking-instruction">Please review the PR and select OK or Not OK</p>
+            
+            <div class="review-options">
+                <label class="review-option">
+                    <input type="radio" name="review" value="OK" id="review-ok">
+                    <span class="checkmark"></span>
+                    OK
+                </label>
+                <label class="review-option">
+                    <input type="radio" name="review" value="Not OK" id="review-not-ok">
+                    <span class="checkmark"></span>
+                    Not OK
+                </label>
+            </div>
+            
+            <div id="links-display-list"></div>
+            <div class="links-view-actions">
+                <button id="save-review-btn" class="btn btn-primary">
+                    Save Review
+                </button>
+            </div>
+            <div id="review-status"></div>
+        </div>
+    `;
+
+    const linksDisplayList = document.getElementById('links-display-list');
+    currentPR.links.forEach((link, index) => {
+        const linkItem = document.createElement('div');
+        linkItem.className = 'link-display-item';
+
+        linkItem.innerHTML = `
+            <div class="link-display-number">Link ${index + 1}</div>
+            <div class="link-display-header">
+                <span class="link-display-text">${escapeHtml(link.link_text)}</span>
+            </div>
+            <a href="${escapeHtml(link.link_url)}" target="_blank" class="link-display-url">
+                ${escapeHtml(link.link_url)}
+            </a>
+        `;
+
+        linksDisplayList.appendChild(linkItem);
+    });
+
+    document.getElementById('save-review-btn').addEventListener('click', saveReview);
+}
+
+// Save Review
+async function saveReview() {
+    const okRadio = document.getElementById('review-ok');
+    const notOkRadio = document.getElementById('review-not-ok');
+    
+    let review = null;
+    if (okRadio.checked) {
+        review = 'OK';
+    } else if (notOkRadio.checked) {
+        review = 'Not OK';
+    }
+    
+    if (!review) {
+        alert('Please select OK or Not OK');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/review', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                pr_id: currentPR.pr_id,
+                review: review
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+            const statusDiv = document.getElementById('review-status');
+            statusDiv.className = 'ranking-saved';
+            statusDiv.textContent = '✓ Review saved successfully!';
+
+            // Update the PR list data
+            await loadPRs();
+
+            setTimeout(() => {
+                showPRList();
+            }, 1500);
+        } else {
+            alert('Error saving review');
+        }
+    } catch (error) {
+        console.error('Error saving review:', error);
+        alert('Error saving review');
+    }
 }
 
 // Save Link Rankings based on drag and drop order
@@ -618,12 +924,23 @@ function renderReport(pr) {
 
 // Export Handler
 async function handleExport(format) {
+    console.log('handleExport called with format:', format);
     try {
+        console.log('Making fetch request to:', `/api/export/${format}`);
         const response = await fetch(`/api/export/${format}`);
+        console.log('Export response received, status:', response.status);
+        console.log('Export response ok:', response.ok);
+        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            console.log('Response not ok, reading error text...');
+            const errorText = await response.text();
+            console.log('Error response text:', errorText);
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
+        
+        console.log('Response ok, getting blob...');
         const blob = await response.blob();
+        console.log('Blob received, size:', blob.size);
 
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -633,9 +950,10 @@ async function handleExport(format) {
         a.click();
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
+        console.log('Download completed');
     } catch (error) {
         console.error('Error exporting:', error);
-        alert('Error exporting data');
+        alert('Error exporting data: ' + error.message);
     }
 }
 

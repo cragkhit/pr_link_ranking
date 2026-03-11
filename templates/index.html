@@ -29,6 +29,12 @@
                     <input type="file" id="ranking-file-input" accept=".csv">
                     <button id="load-ranking-button" class="btn btn-secondary">Load Ranking CSV</button>
                 </div>
+                <div class="load-option">
+                    <h3>Review PR</h3>
+                    <p class="help-text">Upload CSV file for PR review (same format as Upload CSV File)</p>
+                    <input type="file" id="review-file-input" accept=".csv">
+                    <button id="load-review-button" class="btn btn-success">Load for Review</button>
+                </div>
             </div>
             <div id="load-status" class="status-message"></div>
         </div>
@@ -59,6 +65,7 @@
                 <button id="export-csv-button" class="btn btn-primary">Export as CSV</button>
                 <button id="export-json-button" class="btn btn-primary">Export as JSON</button>
                 <button id="export-final-report-button" class="btn btn-primary">Final Report</button>
+                <button id="export-review-csv-button" class="btn btn-warning hidden">Export Review Results</button>
             </div>
         </div>
     </div>

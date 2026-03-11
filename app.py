@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import ast
+import datetime
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from urllib.parse import unquote
@@ -18,7 +19,9 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # In-memory storage for the current session
 current_data = {
     'prs': {},  # pr_id -> {pr_title, pr_url, links: [{link_url, link_text, rank}]}
-    'rankings': {}  # pr_id -> {link_url -> rank}
+    'rankings': {},  # pr_id -> {link_url -> rank}
+    'reviews': {},  # pr_id -> 'OK' or 'Not OK'
+    'mode': 'ranking'  # 'ranking' or 'review'
 }
 
 
@@ -334,6 +337,8 @@ def load_data():
         # Load data
         current_data['prs'] = load_csv_data(filepath)
         current_data['rankings'] = {}
+        current_data['reviews'] = {}
+        current_data['mode'] = 'ranking'
         
         return jsonify({
             'success': True,
@@ -357,6 +362,8 @@ def load_sample():
         sample_path = os.path.join(os.path.dirname(__file__), 'sample_data.csv')
         current_data['prs'] = load_csv_data(sample_path)
         current_data['rankings'] = {}
+        current_data['reviews'] = {}
+        current_data['mode'] = 'ranking'
         
         return jsonify({
             'success': True,
@@ -364,6 +371,49 @@ def load_sample():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/load_review', methods=['POST'])
+def load_review():
+    """Load data from uploaded CSV file for review."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    if not file.filename.endswith('.csv'):
+        return jsonify({'error': 'File must be a CSV'}), 400
+    
+    filepath = None
+    try:
+        # Save file temporarily
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        
+        # Load data
+        current_data['prs'] = load_csv_data(filepath)
+        current_data['rankings'] = {}
+        current_data['reviews'] = {}
+        current_data['mode'] = 'review'
+        
+        return jsonify({
+            'success': True,
+            'pr_count': len(current_data['prs']),
+            'mode': 'review'
+        })
+    except Exception as e:
+        print(f"Error loading CSV for review: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to load CSV file: {str(e)}'}), 500
+    finally:
+        # Always clean up the uploaded file
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
 
 
 @app.route('/api/load_ranking', methods=['POST'])
@@ -406,6 +456,8 @@ def load_ranking():
                     normalized[pr_link]['by_url'][str(key)] = val
 
         current_data['rankings'] = normalized
+        current_data['reviews'] = {}
+        current_data['mode'] = 'ranking'
         
         return jsonify({
             'success': True,
@@ -431,6 +483,7 @@ def get_prs():
     for pr in prs_list:
         pr_id = pr['pr_id']
         ranked = False
+        reviewed = pr_id in current_data['reviews']
         if pr_id in current_data['rankings']:
             rk = current_data['rankings'][pr_id]
             by_index = rk.get('by_index', {})
@@ -444,6 +497,7 @@ def get_prs():
 
             ranked = (count == len(pr['links']))
         pr['ranked'] = ranked
+        pr['reviewed'] = reviewed
     
     return jsonify(prs_list)
 
@@ -532,54 +586,102 @@ def save_ranking():
     return jsonify({'success': True})
 
 
+@app.route('/api/review', methods=['POST'])
+def save_review():
+    """Save review for a PR."""
+    data = request.json
+    pr_id = data.get('pr_id')
+    review = data.get('review')  # 'OK' or 'Not OK'
+    
+    if not pr_id or review not in ['OK', 'Not OK']:
+        return jsonify({'error': 'Missing pr_id or invalid review value'}), 400
+    
+    if pr_id not in current_data['prs']:
+        return jsonify({'error': 'PR not found'}), 404
+    
+    current_data['reviews'][pr_id] = review
+    return jsonify({'success': True})
+
+
 @app.route('/api/export/csv', methods=['GET'])
 def export_csv():
     """Export rankings as CSV with combined ranks and labels."""
+    print("EXPORT_CSV FUNCTION STARTED - THIS SHOULD PRINT!")
+    
+    # Write to file immediately to make sure it's called
+    with open('debug_export.log', 'w') as f:
+        f.write("EXPORT_CSV FUNCTION CALLED AT: " + str(datetime.datetime.now()) + "\n")
+    
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Write header - uid as first column
-    writer.writerow(['uid', 'pr_link', 'repo', 'pr_title', 'media_type', 'isGithub', 'link_count', 'link', 'label_word', 'link_index', 'rank'])
+    # Check current mode
+    is_review_mode = current_data.get('mode') == 'review'
+    print(f"DEBUG: current_data mode = {current_data.get('mode')}")
+    print(f"DEBUG: is_review_mode = {is_review_mode}")
     
-    # Write data - one row per link with label_word matching
-    for pr_id, pr in current_data['prs'].items():
-        rk = current_data['rankings'].get(pr_id, {'by_index': {}, 'by_url': {}})
-        by_index = rk.get('by_index', {})
-        by_url = rk.get('by_url', {})
-
-        # Write one row per link with its matching label
-        for link_idx, link in enumerate(pr['links']):
-            # Prefer URL-keyed rank (from user drag/drop save), fallback to index-keyed rank (from CSV load)
-            rank = ''
-            link_url = link.get('link_url', '')
-            if link_url in by_url:
-                rank = by_url.get(link_url, '')
-            elif isinstance(by_index, dict) and (link_idx in by_index or str(link_idx) in by_index):
-                rank = by_index.get(link_idx, by_index.get(str(link_idx), ''))
-
-            label_word = link.get('label_word', '')
-            
+    # Also write to a debug file
+    with open('debug_export.log', 'a') as f:
+        f.write("EXPORT_CSV FUNCTION STARTED - THIS SHOULD PRINT!\n")
+        f.write(f"DEBUG: current_data mode = {current_data.get('mode')}\n")
+        f.write(f"DEBUG: is_review_mode = {is_review_mode}\n")
+    
+    # Write header - uid as first column
+    if is_review_mode:
+        writer.writerow(['uid', 'pr_link', 'check'])
+    else:
+        writer.writerow(['uid', 'pr_link', 'repo', 'pr_title', 'media_type', 'isGithub', 'link_count', 'link', 'label_word', 'link_index', 'rank'])
+    
+    # Write data
+    if is_review_mode:
+        # For review mode: simple format with just uid, pr_link, check
+        for pr_id, pr in current_data['prs'].items():
+            check_value = current_data['reviews'].get(pr_id, '')
             writer.writerow([
                 pr.get('uid', ''),
                 pr.get('pr_link', pr_id),
-                pr.get('repo', ''),
-                pr['pr_title'],
-                pr.get('media_type', ''),
-                pr.get('isGithub', ''),
-                pr.get('link_count', len(pr['links'])),
-                link['link_url'],
-                label_word,
-                link_idx,
-                str(rank) if rank != '' else ''
+                check_value
             ])
+    else:
+        # For ranking mode: one row per link
+        for pr_id, pr in current_data['prs'].items():
+            rk = current_data['rankings'].get(pr_id, {'by_index': {}, 'by_url': {}})
+            by_index = rk.get('by_index', {})
+            by_url = rk.get('by_url', {})
+
+            # Write one row per link with its matching label
+            for link_idx, link in enumerate(pr['links']):
+                # Prefer URL-keyed rank (from user drag/drop save), fallback to index-keyed rank (from CSV load)
+                link_url = link.get('link_url', '')
+                if link_url in by_url:
+                    rank = by_url.get(link_url, '')
+                elif isinstance(by_index, dict) and (link_idx in by_index or str(link_idx) in by_index):
+                    rank = by_index.get(link_idx, by_index.get(str(link_idx), ''))
+
+                label_word = link.get('label_word', '')
+                
+                writer.writerow([
+                    pr.get('uid', ''),
+                    pr.get('pr_link', pr_id),
+                    pr.get('repo', ''),
+                    pr['pr_title'],
+                    pr.get('media_type', ''),
+                    pr.get('isGithub', ''),
+                    pr.get('link_count', len(pr['links'])),
+                    link['link_url'],
+                    label_word,
+                    link_idx,
+                    str(rank) if rank != '' else ''
+                ])
     
     # Create response
     output.seek(0)
+    filename = 'review_results.csv' if is_review_mode else 'rankings.csv'
     return send_file(
         io.BytesIO(output.getvalue().encode('utf-8')),
         mimetype='text/csv',
         as_attachment=True,
-        download_name='rankings.csv'
+        download_name=filename
     )
 
 
